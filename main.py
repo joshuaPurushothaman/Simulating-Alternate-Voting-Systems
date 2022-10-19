@@ -38,8 +38,8 @@ class Government:
 		if config.GENERATE_REGISTRY_FROM_JSON:
 			self.generate_registry_from_json()
 		else:
-			self.add_random(PersonType.CANDIDATE, 3)
-			self.add_random(PersonType.VOTER, 100)
+			self.add_random(PersonType.CANDIDATE, config.NUM_CANDIDATES)
+			self.add_random(PersonType.VOTER, config.NUM_VOTERS)
 			self.write_registry_to_json()
 
 		# Clean up the logs directory
@@ -89,7 +89,6 @@ class Government:
 		# 	for person in people:
 		# 		self.log(f"\t{person}")
 
-		# Plot the data
 		fig = plt.figure()
 		ax = fig.add_subplot()
 		ax.set_xlabel("Axis 1")
@@ -102,16 +101,18 @@ class Government:
 			y = [p[1] for p in people]
 			ax.scatter(x, y, label=person_type.name)
 
-		votes: list[str] = []
+		votes = dict.fromkeys([str(person) for person in self.person_registry[PersonType.CANDIDATE]], 0)
 
 		for voter in self.person_registry[PersonType.VOTER]:
 			vote = self.person_registry[PersonType.CANDIDATE][0]
 			for candidate in self.person_registry[PersonType.CANDIDATE]:
 				if self.distance(voter, candidate) < self.distance(voter, vote):
 					vote = candidate
-			votes.append(str(vote))
+			votes[str(vote)] += 1
 
-		self.log(f"WINNER: {max(votes, key=votes.count)}")
+		votes = dict(sorted(votes.items(), key=lambda x: x[1], reverse=True))
+
+		self.log(f"Votes: {json.dumps(votes, indent=4)}")
 
 		plt.grid()
 		plt.legend()
