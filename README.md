@@ -2,7 +2,7 @@
 
 Simulations of various voting systems, including:
 
-- None yet :)
+- Plurality
 
 Based on Primer's video on simulating alternate voting systems shown [here](https://youtu.be/yhO6jfHPFQU).
 
