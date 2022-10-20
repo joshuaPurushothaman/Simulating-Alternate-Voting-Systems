@@ -13,7 +13,7 @@ If you want to use a virtual environment, activate it first.
 Run this command to install the dependencies:
 
 ```bash
-pip install numpy matplotlib
+pip install numpy matplotlib names
 ```
 
 ## Usage

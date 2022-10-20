@@ -2,11 +2,6 @@
 import os
 import sys
 
-# Python imports
-from typing import Dict, List
-import numpy.typing as npt
-from enum import Enum
-
 # Logging imports
 import json
 import logging
@@ -14,133 +9,184 @@ import logging
 # Math imports
 import numpy as np
 import matplotlib.pyplot as plt
-import collections
+
+# Miscellaneous imports
+import names
 
 # Local imports
 import config
 
 
-class PersonType(Enum):
-	VOTER = 0
-	CANDIDATE = 1
+class Person:
+    def __init__(self, values=None, name=None):
+        self.values: list[float] = (
+            np.random.uniform(-1, 1, config.NUM_AXES).tolist()
+            if values is None
+            else values
+        )
+        self.name: str = names.get_full_name() if name is None else name
+
+    def distance(self, other: "Person"):
+        return float(
+            np.linalg.norm(
+                [self.values[i] - other.values[i] for i in range(len(self.values))]
+            )
+        )
 
 
-Person = npt.NDArray[np.float64]
+class Voter(Person):
+    pass
+
+
+class Candidate(Person):
+    pass
+
+
+# FIXME: no duplicate named people
+class PersonRegistry:
+    def __init__(self):
+        self.voters: list[Voter] = []
+        self.candidates: list[Candidate] = []
+
+        if config.GENERATE_REGISTRY_FROM_JSON:
+            with open("logs/database.json", "r") as f:
+                data: dict = json.load(f)
+
+                for voter in data["Voters"]:
+                    for name, values in voter.items():
+                        self.add_voter(Voter(values, name))
+
+                for candidate in data["Candidates"]:
+                    for name, values in candidate.items():
+                        self.add_candidate(Candidate(values, name))
+        else:
+            for _ in range(config.NUM_VOTERS):
+                self.add_voter(Voter())
+
+            for _ in range(config.NUM_CANDIDATES):
+                self.add_candidate(Candidate())
+
+            self.write_to_json()
+
+    def write_to_json(self):
+        with open("logs/database.json", "w") as f:
+            dumpy = dict()
+
+            dumpy["Voters"] = {voter.name: voter.values for voter in self.voters}
+            dumpy["Candidates"] = {
+                candidate.name: candidate.values for candidate in self.candidates
+            }
+
+            json.dump(dumpy, f, indent=4)
+
+    def add_voter(self, voter: Voter):
+        self.voters.append(voter)
+
+    def add_candidate(self, candidate: Candidate):
+        self.candidates.append(candidate)
+
+    def get_voters(self) -> list[Voter]:
+        return self.voters
+
+    def get_candidates(self) -> list[Candidate]:
+        return self.candidates
+
+    def get_by_name(self) -> Person:
+        return Person([0.0 for _ in range(config.NUM_AXES)], "BRUH")  # TODO
 
 
 class Government:
-	def __init__(self):
-		self.person_registry: Dict[PersonType, List[Person]] = dict()
+    def __init__(self):
+        self.person_registry = PersonRegistry()
 
-		for person_type in PersonType:
-			self.person_registry[person_type] = list()
+        # Clean up the logs directory
+        for f in [f for f in os.listdir("logs") if f.endswith(".log")]:
+            os.remove(os.path.join("logs", f))
 
-		if config.GENERATE_REGISTRY_FROM_JSON:
-			self.generate_registry_from_json()
-		else:
-			self.add_random(PersonType.CANDIDATE, config.NUM_CANDIDATES)
-			self.add_random(PersonType.VOTER, config.NUM_VOTERS)
-			self.write_registry_to_json()
+    def __enter__(self):
+        self.logger = GovernmentLogger(self)
+        return self
 
-		# Clean up the logs directory
-		for f in [f for f in os.listdir("logs") if f.endswith(".log")]:
-			os.remove(os.path.join("logs", f))
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.logger.close()
 
-	def __enter__(self):
-		self.logger = GovernmentLogger(self)
-		return self
+    def log(self, msg, level: int = logging.DEBUG):
+        self.logger.log(level, msg)
 
-	def __exit__(self, exc_type, exc_val, exc_tb):
-		self.logger.close()
+    def simulate_voting(self):
+        # for person_type, people in self.person_registry.items():
+        # 	self.log(f"{person_type}: {len(people)}")
+        # 	for person in people:
+        # 		self.log(f"\t{person}")
 
-	def log(self, msg, level: int = logging.DEBUG):
-		self.logger.log(level, msg)
+        fig = plt.figure()
+        ax = fig.add_subplot()
+        ax.set_xlabel("Axis 1")
+        ax.set_ylabel("Axis 2")
+        ax.axvline(0, color="black")
+        ax.axhline(0, color="black")
 
-	def write_registry_to_json(self):
-		with open("logs/database.json", "w") as f:
-			dumpy = dict()
+        ax.scatter(
+            [person.values[0] for person in self.person_registry.get_voters()],
+            [person.values[1] for person in self.person_registry.get_voters()],
+            color="lightskyblue",
+            label="Voters",
+        )
 
-			for person_type, values in self.person_registry.items():
-				dumpy[person_type.name] = [person.tolist() for person in values]
+        ax.scatter(
+            [
+                candidate.values[0]
+                for candidate in self.person_registry.get_candidates()
+            ],
+            [
+                candidate.values[1]
+                for candidate in self.person_registry.get_candidates()
+            ],
+            color="darkorange",
+            label="Candidates",
+        )
 
-			json.dump(dumpy, f, indent=4)
+        votes = dict.fromkeys(self.person_registry.get_candidates(), 0)
 
-	def generate_registry_from_json(self):
-		with open("logs/database.json", "r") as f:
-			data: Dict[str, List[float]] = json.load(f)
+        for voter in self.person_registry.get_voters():
+            vote = min(
+                self.person_registry.get_candidates(),
+                key=lambda candidate: voter.distance(candidate),
+            )
+            votes[vote] += 1
 
-			for person_type, value_lists in data.items():
-				for values in value_lists:
-					self.person_registry[PersonType[person_type]].append(
-						np.array(values, dtype=np.float64)
-					)
+        votes = dict(sorted(votes.items(), key=lambda x: x[1], reverse=True))
+        votes = {candidate.name: votes[candidate] for candidate in votes}
 
-	def add_random(self, person_type: PersonType, num: int):
-		self.person_registry[person_type] = [
-			np.random.uniform(-1, 1, size=config.NUM_AXES) for _ in range(num)
-		]
+        self.log(f"Votes: {json.dumps(votes, indent=4)}")
 
-	def distance(self, a: Person, b: Person):
-		return np.linalg.norm(a - b)
-
-	def simulate_voting(self):
-		# for person_type, people in self.person_registry.items():
-		# 	self.log(f"{person_type}: {len(people)}")
-		# 	for person in people:
-		# 		self.log(f"\t{person}")
-
-		fig = plt.figure()
-		ax = fig.add_subplot()
-		ax.set_xlabel("Axis 1")
-		ax.set_ylabel("Axis 2")
-		ax.axvline(0, color="black")
-		ax.axhline(0, color="black")
-
-		for person_type, people in self.person_registry.items():
-			x = [p[0] for p in people]
-			y = [p[1] for p in people]
-			ax.scatter(x, y, label=person_type.name)
-
-		votes = dict.fromkeys([str(person) for person in self.person_registry[PersonType.CANDIDATE]], 0)
-
-		for voter in self.person_registry[PersonType.VOTER]:
-			vote = self.person_registry[PersonType.CANDIDATE][0]
-			for candidate in self.person_registry[PersonType.CANDIDATE]:
-				if self.distance(voter, candidate) < self.distance(voter, vote):
-					vote = candidate
-			votes[str(vote)] += 1
-
-		votes = dict(sorted(votes.items(), key=lambda x: x[1], reverse=True))
-
-		self.log(f"Votes: {json.dumps(votes, indent=4)}")
-
-		plt.grid()
-		plt.legend()
-		plt.show()
+        plt.grid()
+        plt.legend()
+        plt.show()
 
 
 class GovernmentLogger(logging.Logger):
-	def __init__(self, govt: Government):
-		name = str(id(govt))
+    def __init__(self, govt: Government):
+        name = str(id(govt))
 
-		super().__init__(name, config.LOG_LEVEL)
+        super().__init__(name, config.LOG_LEVEL)
 
-		if config.LOG_TO_TERMINAL:
-			self.std_handler = logging.StreamHandler(sys.stdout)
-			self.addHandler(self.std_handler)
+        if config.LOG_TO_TERMINAL:
+            self.std_handler = logging.StreamHandler(sys.stdout)
+            self.addHandler(self.std_handler)
 
-		self.file_handler = logging.FileHandler(f"logs/{name}.log")
-		self.addHandler(self.file_handler)
+        self.file_handler = logging.FileHandler(f"logs/{name}.log")
+        self.addHandler(self.file_handler)
 
-		self.debug(f"Government Logger initialized for {name}\n\n")
+        self.debug(f"Government Logger initialized for {name}\n\n")
 
-	def close(self):
-		handlers = self.handlers
-		for handler in handlers:
-			self.removeHandler(handler)
-			handler.close()
+    def close(self):
+        handlers = self.handlers
+        for handler in handlers:
+            self.removeHandler(handler)
+            handler.close()
 
 
 if __name__ == "__main__":
-	with Government() as govt:
-		govt.simulate_voting()
+    with Government() as govt:
+        govt.simulate_voting()
