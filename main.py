@@ -5,9 +5,12 @@ import sys
 # Logging imports
 import json
 import logging
-from typing import Callable
+
+# Python imports
+from typing import Callable, Tuple
 
 # Math imports
+import math
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backend_bases import MouseEvent
@@ -100,24 +103,39 @@ class PersonRegistry:
         return None
 
 
+# TODO: Dark style
+# TODO: Where's the legend?
+# TODO: Colorbar?
+# TODO: Votes bars come in sorted order always, instead of matching the names. Either animate the names or fix the bars' order.
 class GovernmentPlotter:
     def __init__(
         self,
         registry: PersonRegistry,
         logger: logging.Logger,
-        results_callback: Callable[[], str],
+        results_callback: Callable[
+            [Candidate | None], Tuple[dict[str, int], np.ndarray]
+        ],
     ):
         self.person_registry = registry
         self.logger = logger
         self.results_callback = results_callback
 
-        self.fig, self.ax = plt.subplots(figsize=(10, 9))
+        self.fig, (self.ax_graph, self.ax_results) = plt.subplots(1, 2, figsize=(21, 9))
 
         self.fig.canvas.mpl_connect("button_press_event", self.on_click)
         self.fig.canvas.mpl_connect("button_release_event", self.on_release)
         self.fig.canvas.mpl_connect("motion_notify_event", self.on_motion)
 
         self.nearest_candidate: Candidate | None = None
+
+
+        self.votes, heatmap = self.results_callback(self.nearest_candidate)
+        self.results_bars = self.ax_results.bar(
+            list(self.votes.keys()),
+            list(self.votes.values()),
+            color="forestgreen",
+        )
+        self.image = self.ax_graph.pcolormesh(heatmap, heatmap, heatmap, cmap="plasma")
 
         self.anim = FuncAnimation(
             self.fig,
@@ -128,13 +146,17 @@ class GovernmentPlotter:
             blit=True,
         )
 
-        self.text = self.ax.text(-1, -1, self.results_callback(), fontsize=16)
+    def update_text_and_image(self):
+        self.votes, heatmap = self.results_callback(self.nearest_candidate)
+        for rect, height in zip(self.results_bars, list(self.votes.values())):
+            rect.set_height(height)
+        self.image.set_array(heatmap)
 
     def log(self, msg, level: int = logging.DEBUG):
         self.logger.log(level, msg)
 
     def on_click(self, event: MouseEvent):
-        if event.button == 1 and event.inaxes == self.ax:
+        if event.button == 1 and event.inaxes == self.ax_graph:
             self.nearest_candidate = min(
                 self.person_registry.get_candidates(),
                 key=lambda candidate: candidate.distance(
@@ -143,12 +165,12 @@ class GovernmentPlotter:
             )
 
     def on_release(self, event: MouseEvent):
-        if event.button == 1 and event.inaxes == self.ax:
+        if event.button == 1 and event.inaxes == self.ax_graph:
+            self.update_text_and_image()
             self.nearest_candidate = None
-            self.text.set_text(self.results_callback())
 
     def on_motion(self, event: MouseEvent):
-        if event.inaxes == self.ax and self.nearest_candidate is not None:
+        if event.inaxes == self.ax_graph and self.nearest_candidate is not None:
             if event.xdata is not None and event.ydata is not None:
                 self.nearest_candidate.values = [event.xdata, event.ydata]
 
@@ -157,14 +179,14 @@ class GovernmentPlotter:
             plt.show()
 
     def init_anim(self):
-        self.ax.set_xlabel("Apples or Mangoes")
-        self.ax.set_ylabel("Modern house or Spooky house")
-        self.ax.set_xlim(-1, 1)
-        self.ax.set_ylim(-1, 1)
-        self.ax.axvline(0, color="black")
-        self.ax.axhline(0, color="black")
+        self.ax_graph.set_xlabel("Apples or Mangoes")
+        self.ax_graph.set_ylabel("Modern house or Spooky house")
+        self.ax_graph.set_xlim(-1, 1)
+        self.ax_graph.set_ylim(-1, 1)
+        self.ax_graph.axvline(0, color="black")
+        self.ax_graph.axhline(0, color="black")
 
-        candidates_lines = self.ax.plot(
+        candidates_lines = self.ax_graph.plot(
             [
                 candidate.values[0]
                 for candidate in self.person_registry.get_candidates()
@@ -179,7 +201,7 @@ class GovernmentPlotter:
         )
 
         self.candidate_annotations = [
-            self.ax.annotate(
+            self.ax_graph.annotate(
                 candidate.name,
                 (
                     candidate.values[0],
@@ -189,7 +211,7 @@ class GovernmentPlotter:
             for candidate in self.person_registry.get_candidates()
         ]
 
-        self.voters_lines = self.ax.plot(
+        self.voters_lines = self.ax_graph.plot(
             [person.values[0] for person in self.person_registry.get_voters()],
             [person.values[1] for person in self.person_registry.get_voters()],
             "o",
@@ -197,17 +219,40 @@ class GovernmentPlotter:
             label="Voters",
         )
 
-        plt.grid()
-        handles, labels = self.ax.get_legend_handles_labels()
+        self.ax_graph.grid()
+        handles, labels = self.ax_graph.get_legend_handles_labels()
         handles, labels = handles[-2:], labels[-2:]
-        plt.legend(handles, labels, loc="lower right")
+        self.ax_graph.legend(handles, labels, loc="lower right")
 
-        self.lines = candidates_lines + self.voters_lines
+        self.ax_results.set_xlabel("Candidates")
+        self.ax_results.set_ylabel("Votes")
+        self.ax_results.set_xticks(range(config.NUM_CANDIDATES))
+        self.ax_results.set_xticklabels(
+            [candidate.name for candidate in self.person_registry.get_candidates()]
+        )
+        for bar in self.results_bars:
+            height = bar.get_height()
+            self.ax_results.annotate(
+                "{}".format(height),
+                xy=(bar.get_x() + bar.get_width() / 2, height),
+                xytext=(0, 3),  # 3 points vertical offset
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+            )
 
-        return self.lines + self.candidate_annotations + [self.text]
+        # self.fig.colorbar(self.image)
+
+        return (
+            *candidates_lines,
+            *self.voters_lines,
+            *self.results_bars,
+            *self.candidate_annotations,
+            self.image,
+        )
 
     def update_anim(self, i):
-        candidates_lines = self.ax.plot(
+        candidates_lines = self.ax_graph.plot(
             [
                 candidate.values[0]
                 for candidate in self.person_registry.get_candidates()
@@ -225,18 +270,28 @@ class GovernmentPlotter:
         ):
             annotation.set_position((candidate.values[0], candidate.values[1]))
 
-        self.lines = candidates_lines + self.voters_lines
+        return (
+            *candidates_lines,
+            *self.voters_lines,
+            *self.results_bars,
+            *self.candidate_annotations,
+            self.image,
+        )
 
-        return self.lines + self.candidate_annotations + [self.text]
 
-
+# TODO: Thread pool parallelization
+# TODO: Consider PyPy
+# TODO: asyncio
+# TODO: Real voter data
 class Government:
+    def __init__(self):
+        heatmap_resolution = int(math.sqrt(config.NUM_VOTERS))
+        self.heatmap = np.linspace(0, 1, num=config.NUM_VOTERS).reshape(
+            heatmap_resolution, heatmap_resolution
+        )
+
     def __enter__(self):
         self.person_registry = PersonRegistry()
-
-        # Clean up the logs directory
-        for f in [f for f in os.listdir("logs") if f.endswith(".log")]:
-            os.remove(os.path.join("logs", f))
 
         self.logger = GovernmentLogger(id(self))
 
@@ -253,7 +308,7 @@ class Government:
     def log(self, msg, level: int = logging.DEBUG):
         self.logger.log(level, msg)
 
-    def simulate_voting(self):
+    def simulate_voting(self, last_selected: Candidate | None):
         votes = dict.fromkeys(self.person_registry.get_candidates(), 0)
 
         for voter in self.person_registry.get_voters():
@@ -266,17 +321,35 @@ class Government:
         votes = dict(sorted(votes.items(), key=lambda x: x[1], reverse=True))
         votes = {candidate.name: votes[candidate] for candidate in votes}
 
-        results = f"Votes: {json.dumps(votes, indent=4)}"
+        self.log(f"Votes: {json.dumps(votes, indent=4)}")
 
-        self.log(results)
+        def map_range(x, in_min, in_max, out_min, out_max):
+            return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
 
-        return results
+        if last_selected is not None:
+            for iy, ix in np.ndindex(self.heatmap.shape):
+                self.heatmap[iy, ix] = map_range(
+                    last_selected.distance(
+                        Person(
+                            [
+                                map_range(ix, 0, config.NUM_VOTERS, -1, 1),
+                                map_range(iy, 0, config.NUM_VOTERS, -1, 1),
+                            ]
+                        )
+                    ),
+                    0,
+                    math.sqrt(8),
+                    0,
+                    1,
+                )
+
+        return votes, self.heatmap
 
     def run(self):
         self.plotter.plot()
 
 
-class GovernmentLogger(logging.Logger):
+class GovernmentLogger(logging.Logger): 
     def __init__(self, govt_id):
         name = str(govt_id)
 
@@ -285,6 +358,10 @@ class GovernmentLogger(logging.Logger):
         if config.LOG_TO_TERMINAL:
             self.std_handler = logging.StreamHandler(sys.stdout)
             self.addHandler(self.std_handler)
+
+        # Clean up the logs directory
+        for f in [f for f in os.listdir("logs") if f.endswith(".log")]:
+            os.remove(os.path.join("logs", f))
 
         self.file_handler = logging.FileHandler(f"logs/{name}.log")
         self.addHandler(self.file_handler)
